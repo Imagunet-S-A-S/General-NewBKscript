@@ -1,0 +1,155 @@
+#!/bin/bash
+
+################################################################################
+# ARCHIVO DE CONFIGURACIÓN PARA SCRIPT DE BACKUP
+# ============================================================================
+# Este archivo contiene todas las variables de entorno que puede necesitar
+# el script de backup. Edita según tu infraestructura.
+################################################################################
+
+# ============================================================================
+# CONFIGURACIÓN DE DIRECTORIOS
+# ============================================================================
+
+# Directorio base donde se almacenarán todos los backups
+export BACKUP_BASE_DIR="/backups"
+
+# Número de días para retener backups antiguos (default: 21 días = 3 semanas)
+export RETENTION_DAYS="21"
+
+# ============================================================================
+# CONFIGURACIÓN DE MARIADB / MYSQL
+# ============================================================================
+
+# Usuario de MariaDB (deja vacío para usar socket unix o ~/.my.cnf)
+export MYSQL_USER="root"
+
+# Contraseña de MariaDB (usar variables de entorno, NO incluir en git)
+# Para mayor seguridad, crear archivo ~/.my.cnf:
+# [mysqldump]
+# user=root
+# password=tu_contraseña_aquí
+export MYSQL_PASSWORD=""
+
+# Host del servidor MariaDB
+export MYSQL_HOST="localhost"
+
+# Puerto de MariaDB
+export MYSQL_PORT="3306"
+
+# ============================================================================
+# CONFIGURACIÓN DE OPENSEARCH
+# ============================================================================
+
+# Host del cluster OpenSearch
+export OPENSEARCH_HOST="localhost"
+
+# Puerto del cluster OpenSearch
+export OPENSEARCH_PORT="9200"
+
+# Usuario de OpenSearch (si requiere autenticación)
+export OPENSEARCH_USER="admin"
+
+# Contraseña de OpenSearch (si requiere autenticación)
+export OPENSEARCH_PASSWORD=""
+
+# Ubicación para snapshots de OpenSearch
+export OPENSEARCH_SNAPSHOT_PATH="/backups/opensearch_snapshots"
+
+# ============================================================================
+# CONFIGURACIÓN DE JAEGER
+# ============================================================================
+
+# Home directory de Jaeger
+export JAEGER_HOME="/opt/jaeger"
+
+# Jaeger típicamente usa OpenSearch/Elasticsearch como backend
+# Estas configuraciones se heredan de OpenSearch arriba
+
+# ============================================================================
+# CONFIGURACIÓN DE AIRFLOW
+# ============================================================================
+
+# Home directory de Airflow
+export AIRFLOW_HOME="${AIRFLOW_HOME:-$HOME/airflow}"
+
+# Base de datos de Airflow (generalmente PostgreSQL o MariaDB)
+# Si está en MariaDB, se capturará en el backup general
+# Si usa PostgreSQL, considera agregar backup específico
+export AIRFLOW_DB_TYPE="mysql"
+export AIRFLOW_DB_HOST="localhost"
+export AIRFLOW_DB_USER="airflow"
+export AIRFLOW_DB_NAME="airflow"
+
+# ============================================================================
+# CONFIGURACIÓN DE LOGGING
+# ============================================================================
+
+# Nivel de log (DEBUG, INFO, WARN, ERROR)
+export LOG_LEVEL="INFO"
+
+# Mantener logs por X días
+export LOG_RETENTION_DAYS="90"
+
+# ============================================================================
+# CONFIGURACIÓN AVANZADA
+# ============================================================================
+
+# Número de threads para compresión (default: 2)
+export COMPRESSION_THREADS="2"
+
+# Habilitar verificación de integridad después de backup
+export VERIFY_INTEGRITY="true"
+
+# Enviar notificaciones por email al completar
+export ENABLE_EMAIL_NOTIFICATIONS="false"
+export NOTIFICATION_EMAIL="admin@imagunet.com.co"
+
+# Enviar estadísticas a servidor de monitoreo
+export ENABLE_MONITORING="false"
+export MONITORING_HOST="zabbix.example.com"
+
+# ============================================================================
+# CONFIGURACIÓN DE ALMACENAMIENTO REMOTO (opcional)
+# ============================================================================
+
+# Habilitar backup a servidor remoto (rsync, S3, etc.)
+export ENABLE_REMOTE_BACKUP="false"
+
+# Tipo de almacenamiento remoto: rsync, s3, azure, gcs
+export REMOTE_BACKUP_TYPE="rsync"
+
+# Para rsync:
+export RSYNC_HOST="backup.example.com"
+export RSYNC_USER="backup_user"
+export RSYNC_PATH="/data/backups"
+export RSYNC_PORT="22"
+
+# Para S3:
+export AWS_ACCESS_KEY_ID=""
+export AWS_SECRET_ACCESS_KEY=""
+export AWS_REGION="us-east-1"
+export S3_BUCKET="my-backups"
+
+# ============================================================================
+# NOTAS IMPORTANTES
+# ============================================================================
+
+# 1. SEGURIDAD:
+#    - Nunca guardes credenciales en este archivo si está en un repositorio
+#    - Usa variables de entorno o archivos de configuración con permisos 600
+#    - Para MariaDB, mejor opción es usar ~/.my.cnf con permisos 600
+#    
+# 2. USO:
+#    source /ruta/a/backup.conf
+#    /ruta/a/backup_infrastructure.sh
+#    
+# 3. CRON JOB (ejecutar a las 2:00 AM diariamente):
+#    0 2 * * * source /ruta/a/backup.conf && /ruta/a/backup_infrastructure.sh
+#
+# 4. SUPERVISIÓN:
+#    - Revisa regularmente los logs en ${BACKUP_BASE_DIR}/logs/
+#    - Verifica el espacio en disco disponible
+#    - Prueba restauraciones periódicamente
+#
+# ============================================================================
