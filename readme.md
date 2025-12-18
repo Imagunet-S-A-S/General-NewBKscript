@@ -1,101 +1,73 @@
-SISTEMA DE BACKUP - README SIMPLE
+# SISTEMA DE BACKUP AUTOMÁTICO
 
+## ¿QUÉ ES?
 
-¿QUÉ ES?
-Un script que automáticamente realiza copias de seguridad de tus aplicaciones
-y bases de datos cada día. Se ejecuta solo, sin que hagas nada.
+Este sistema es un **script de respaldo automático** que realiza copias de seguridad diarias de aplicaciones críticas y bases de datos del servidor.
 
+Funciona de forma **totalmente automática**, sin intervención manual, y garantiza la protección de configuraciones y datos.
 
-¿QUÉ BACKUPS HACE?
+---
 
+## ¿QUÉ RESPALDA?
 
-El script respalda AUTOMÁTICAMENTE:
+El sistema realiza backups automáticos de las siguientes aplicaciones **solo si están instaladas y en ejecución**:
 
-1. ZABBIX
-   ├─ Configuración: /etc/zabbix
-   └─ Datos: /var/lib/zabbix (historial, eventos, alertas)
+### ZABBIX
+- Configuración: `/etc/zabbix`
+- Datos: `/var/lib/zabbix`  
+  *(historial, eventos, alertas)*
 
-2. GLPI
-   ├─ Aplicación completa: /var/www/glpi
-   └─ Datos: /var/lib/glpi (documentos, registros)
+### GLPI
+- Aplicación completa: `/var/www/glpi`
+- Datos: `/var/lib/glpi`  
+  *(documentos, adjuntos, registros)*
 
-3. GRAFANA
-   ├─ Configuración: /etc/grafana
-   └─ Datos: /var/lib/grafana (dashboards, plugins, BD de usuario)
+### GRAFANA
+- Configuración: `/etc/grafana`
+- Datos: `/var/lib/grafana`  
+  *(dashboards, plugins, base de datos interna)*
 
-4. MARIADB
-   ├─ Todas las bases de datos (mysqldump)
-   └─ Configuración: /etc/mysql (my.cnf, settings)
+### MARIADB
+- Todas las bases de datos (`mysqldump`)
+- Configuración: `/etc/mysql`  
+  *(archivos `my.cnf` y parámetros)*
 
-5. OPENSEARCH (si está instalado)
-   ├─ Configuración: /etc/opensearch
-   └─ Datos: índices y búsquedas
+### OPENSEARCH *(si está instalado)*
+- Configuración: `/etc/opensearch`
+- Datos: índices y búsquedas
 
-6. JAEGER (si está instalado)
-   ├─ Configuración: /etc/jaeger
-   └─ Datos: trazas distribuidas
+### JAEGER *(si está instalado)*
+- Configuración: `/etc/jaeger`
+- Datos: trazas distribuidas
 
-7. AIRFLOW (si está instalado)
-   ├─ Todo el directorio: $AIRFLOW_HOME
-   └─ Configuración, DAGs, historial
+### AIRFLOW *(si está instalado)*
+- Directorio completo: `$AIRFLOW_HOME`
+- Configuración, DAGs e historial de ejecuciones
 
+---
 
-¿CÓMO FUNCIONAN LOS BACKUPS?
+## ¿CÓMO FUNCIONA EL SISTEMA?
 
-DETECCIÓN AUTOMÁTICA
-   El script detecta qué aplicaciones tienes corriendo.
-   Si Zabbix está corriendo → respalda Zabbix
-   Si Grafana está corriendo → respalda Grafana
-   Si MariaDB está corriendo → respalda MariaDB
-   Y así con todas.
+### 1. Detección automática
+El script identifica qué servicios están activos en el servidor.
 
-CREAR COPIA
-   Copia toda la información (configuración + datos) a /backups/
-   Los archivos se comprimen en formato TAR.GZ (para ocupar menos espacio)
-   
-   Ejemplo:
-   ├─ zabbix_config_20240115_020000.tar.gz (20 MB)
-   ├─ zabbix_lib_20240115_020000.tar.gz (15 MB)
-   ├─ mariadb_full_20240115_020000.tar.gz (150 MB)
-   └─ grafana_lib_20240115_020000.tar.gz (5 MB)
+Ejemplos:
+- Si Zabbix está corriendo → se respalda Zabbix
+- Si Grafana está corriendo → se respalda Grafana
+- Si MariaDB está corriendo → se respalda MariaDB
 
-EJECUCIÓN
-   Se ejecuta automáticamente cada noche a las 2:00 AM (configurable)
-   O puedes ejecutar manualmente: backup-now
-   
-ROTACIÓN AUTOMÁTICA
-   Los backups viejos se eliminan automáticamente 
+Solo se respaldan los componentes disponibles.
 
+---
 
-RETENCIÓN - ¿CUÁNTO TIEMPO SE GUARDAN?
+### 2. Creación de los backups
+- Se copian **configuraciones y datos**
+- Los archivos se almacenan en `/backups/`
+- Cada respaldo se comprime en formato **`.tar.gz`** para reducir espacio
 
-Periodo: 21 dia (3 semanas) Configurable
-
-
-ESTRUCTURA FINAL EN TU SERVIDOR
-
-
-/backups/                  ← Donde se guardan todos los backups
-├── logs/
-│   ├── backup_20240115_020000.log
-│   ├── backup_20240116_020000.log
-│   └── ...
-│
-├── configs/
-│   ├── zabbix_config_*.tar.gz
-│   ├── zabbix_lib_*.tar.gz
-│   ├── glpi_lib_*.tar.gz
-│   ├── grafana_lib_*.tar.gz
-│   ├── mariadb_config_*.tar.gz
-│   └── ...
-│
-└── databases/
-    ├── mariadb_full_*.tar.gz
-    └── ...
-
-/opt/backup-scripts/       ← Donde se instalan los scripts
-├── backup_infrastructure.sh
-├── restore_infrastructure.sh
-├── test_backup_system.sh
-├── install.sh
-└── backup.conf
+**Ejemplo de archivos generados:**
+```text
+zabbix_config_20240115_020000.tar.gz
+zabbix_lib_20240115_020000.tar.gz
+mariadb_full_20240115_020000.tar.gz
+grafana_lib_20240115_020000.tar.gz
