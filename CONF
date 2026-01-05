@@ -101,55 +101,7 @@ export COMPRESSION_THREADS="2"
 # Habilitar verificación de integridad después de backup
 export VERIFY_INTEGRITY="true"
 
-# Enviar notificaciones por email al completar
-export ENABLE_EMAIL_NOTIFICATIONS="false"
-export NOTIFICATION_EMAIL="admin@imagunet.com.co"
 
-# Enviar estadísticas a servidor de monitoreo
-export ENABLE_MONITORING="false"
-export MONITORING_HOST="zabbix.example.com"
 
-# ============================================================================
-# CONFIGURACIÓN DE ALMACENAMIENTO REMOTO (opcional)
-# ============================================================================
 
-# Habilitar backup a servidor remoto (rsync, S3, etc.)
-export ENABLE_REMOTE_BACKUP="false"
 
-# Tipo de almacenamiento remoto: rsync, s3, azure, gcs
-export REMOTE_BACKUP_TYPE="rsync"
-
-# Para rsync:
-export RSYNC_HOST="backup.example.com"
-export RSYNC_USER="backup_user"
-export RSYNC_PATH="/data/backups"
-export RSYNC_PORT="22"
-
-# Para S3:
-export AWS_ACCESS_KEY_ID=""
-export AWS_SECRET_ACCESS_KEY=""
-export AWS_REGION="us-east-1"
-export S3_BUCKET="my-backups"
-
-# ============================================================================
-# NOTAS IMPORTANTES
-# ============================================================================
-
-# 1. SEGURIDAD:
-#    - Nunca guardes credenciales en este archivo si está en un repositorio
-#    - Usa variables de entorno o archivos de configuración con permisos 600
-#    - Para MariaDB, mejor opción es usar ~/.my.cnf con permisos 600
-#    
-# 2. USO:
-#    source /ruta/a/backup.conf
-#    /ruta/a/backup_infrastructure.sh
-#    
-# 3. CRON JOB (ejecutar a las 2:00 AM diariamente):
-#    0 2 * * * source /ruta/a/backup.conf && /ruta/a/backup_infrastructure.sh
-#
-# 4. SUPERVISIÓN:
-#    - Revisa regularmente los logs en ${BACKUP_BASE_DIR}/logs/
-#    - Verifica el espacio en disco disponible
-#    - Prueba restauraciones periódicamente
-#
-# ============================================================================

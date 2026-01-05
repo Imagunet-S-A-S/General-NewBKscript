@@ -5,7 +5,7 @@
 # ============================================================================
 # Propósito: Realizar backup automatizado de aplicaciones y bases de datos
 # Versión: 2.0
-# Autor: Imagunet S.A.S.
+# Autor: Imagunet S.A.S. - Sistemas de Monitoreo
 # Descripción: Detecta aplicaciones corriendo (Zabbix, GLPI, Grafana, MariaDB,
 #              OpenSearch, Jaeger, Airflow) y realiza backups inteligentes
 ################################################################################
@@ -24,7 +24,7 @@ DB_BACKUP_DIR="${BACKUP_BASE_DIR}/databases"
 APP_BACKUP_DIR="${BACKUP_BASE_DIR}/applications"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 LOG_FILE="${LOG_DIR}/backup_${TIMESTAMP}.log"
-RETENTION_DAYS="${RETENTION_DAYS:-30}"
+RETENTION_DAYS="${RETENTION_DAYS:-21}"
 
 # Colores para output
 RED='\033[0;31m'
@@ -254,6 +254,12 @@ backup_zabbix_config() {
             break
         fi
     done
+    
+    # Backup de /var/lib/zabbix si existe
+    if [[ -d "/var/lib/zabbix" ]]; then
+        log INFO "Realizando backup de /var/lib/zabbix..."
+        compress_backup "/var/lib/zabbix" "${CONFIG_BACKUP_DIR}/zabbix_lib_${TIMESTAMP}" || true
+    fi
 }
 
 backup_glpi_config() {
@@ -267,11 +273,17 @@ backup_glpi_config() {
     
     for dir in "${glpi_dirs[@]}"; do
         if [[ -d "$dir" ]]; then
-            log INFO "Encontrado directorio GLPI: $dir"
+            log INFO "Encontrado directorio de GLPI: $dir"
             compress_backup "$dir" "${CONFIG_BACKUP_DIR}/glpi_full_${TIMESTAMP}"
             break
         fi
     done
+    
+    # Backup de /var/lib/glpi si existe
+    if [[ -d "/var/lib/glpi" ]]; then
+        log INFO "Realizando backup de /var/lib/glpi..."
+        compress_backup "/var/lib/glpi" "${CONFIG_BACKUP_DIR}/glpi_lib_${TIMESTAMP}" || true
+    fi
 }
 
 backup_grafana_config() {
@@ -289,6 +301,12 @@ backup_grafana_config() {
             compress_backup "$dir" "${CONFIG_BACKUP_DIR}/grafana_config_${TIMESTAMP}"
         fi
     done
+    
+    # Asegurar que /var/lib/grafana se respalda si no se capturo arriba
+    if [[ -d "/var/lib/grafana" ]]; then
+        log INFO "Asegurando backup de /var/lib/grafana..."
+        compress_backup "/var/lib/grafana" "${CONFIG_BACKUP_DIR}/grafana_lib_${TIMESTAMP}" || true
+    fi
 }
 
 backup_opensearch_config() {
@@ -306,6 +324,12 @@ backup_opensearch_config() {
             break
         fi
     done
+    
+    # Backup de /var/lib/opensearch si existe
+    if [[ -d "/var/lib/opensearch" ]]; then
+        log INFO "Realizando backup de /var/lib/opensearch..."
+        compress_backup "/var/lib/opensearch" "${CONFIG_BACKUP_DIR}/opensearch_lib_${TIMESTAMP}" || true
+    fi
 }
 
 backup_jaeger_config() {
@@ -323,6 +347,12 @@ backup_jaeger_config() {
             break
         fi
     done
+    
+    # Backup de /var/lib/jaeger si existe
+    if [[ -d "/var/lib/jaeger" ]]; then
+        log INFO "Realizando backup de /var/lib/jaeger..."
+        compress_backup "/var/lib/jaeger" "${CONFIG_BACKUP_DIR}/jaeger_lib_${TIMESTAMP}" || true
+    fi
 }
 
 backup_airflow_config() {
@@ -357,13 +387,20 @@ backup_mariadb() {
     # Intentar usar .my.cnf si existe
     if [[ -f "$HOME/.my.cnf" ]]; then
         log INFO "Usando credenciales de .my.cnf"
-        if mysqldump --all-databases --single-transaction --quick --lock-tables=false \
+        if mysqldump --all-databases --single-transaction --quick --lock-tables=false --triggers \
             > "${DB_BACKUP_DIR}/mariadb_full_${TIMESTAMP}.sql" 2>/dev/null; then
             
             compress_backup "${DB_BACKUP_DIR}/mariadb_full_${TIMESTAMP}.sql" \
                             "${DB_BACKUP_DIR}/mariadb_full_${TIMESTAMP}"
             rm -f "${DB_BACKUP_DIR}/mariadb_full_${TIMESTAMP}.sql"
             log SUCCESS "Backup de MariaDB completado"
+            
+            # Backup de archivos de configuracion de MariaDB
+            if [[ -d "/etc/mysql" ]]; then
+                log INFO "Realizando backup de configuracion de MariaDB..."
+                compress_backup "/etc/mysql" "${CONFIG_BACKUP_DIR}/mariadb_config_${TIMESTAMP}" || true
+            fi
+            
             return 0
         fi
     fi
@@ -371,25 +408,39 @@ backup_mariadb() {
     # Intentar conexión con credenciales
     if [[ -n "$mysql_password" ]]; then
         if mysqldump -u "$mysql_user" -p"$mysql_password" -h "$mysql_host" \
-            --all-databases --single-transaction --quick --lock-tables=false \
+            --all-databases --single-transaction --quick --lock-tables=false --triggers \
             > "${DB_BACKUP_DIR}/mariadb_full_${TIMESTAMP}.sql" 2>/dev/null; then
             
             compress_backup "${DB_BACKUP_DIR}/mariadb_full_${TIMESTAMP}.sql" \
                             "${DB_BACKUP_DIR}/mariadb_full_${TIMESTAMP}"
             rm -f "${DB_BACKUP_DIR}/mariadb_full_${TIMESTAMP}.sql"
             log SUCCESS "Backup de MariaDB completado"
+            
+            # Backup de archivos de configuracion
+            if [[ -d "/etc/mysql" ]]; then
+                log INFO "Realizando backup de configuracion de MariaDB..."
+                compress_backup "/etc/mysql" "${CONFIG_BACKUP_DIR}/mariadb_config_${TIMESTAMP}" || true
+            fi
+            
             return 0
         fi
     fi
     
     # Intentar sin contraseña (socket unix)
-    if mysqldump --single-transaction --quick --lock-tables=false \
+    if mysqldump --single-transaction --quick --lock-tables=false --triggers \
         --all-databases > "${DB_BACKUP_DIR}/mariadb_full_${TIMESTAMP}.sql" 2>/dev/null; then
         
         compress_backup "${DB_BACKUP_DIR}/mariadb_full_${TIMESTAMP}.sql" \
                         "${DB_BACKUP_DIR}/mariadb_full_${TIMESTAMP}"
         rm -f "${DB_BACKUP_DIR}/mariadb_full_${TIMESTAMP}.sql"
         log SUCCESS "Backup de MariaDB completado"
+        
+        # Backup de archivos de configuracion
+        if [[ -d "/etc/mysql" ]]; then
+            log INFO "Realizando backup de configuracion de MariaDB..."
+            compress_backup "/etc/mysql" "${CONFIG_BACKUP_DIR}/mariadb_config_${TIMESTAMP}" || true
+        fi
+        
         return 0
     fi
     
@@ -447,40 +498,8 @@ backup_jaeger_data() {
 }
 
 # ============================================================================
-# INFORMES
+# LIMPIEZA Y FINALIZACIÓN
 # ============================================================================
-
-generate_report() {
-    log INFO "Generando reporte final..."
-    
-    local report_file="${LOG_DIR}/backup_report_${TIMESTAMP}.txt"
-    
-    {
-        echo "================================================================================"
-        echo "REPORTE DE BACKUP - $(date)"
-        echo "================================================================================"
-        echo ""
-        echo "DIRECTORIOS DE BACKUP:"
-        echo "  - Base: ${BACKUP_BASE_DIR}"
-        echo "  - Configuraciones: ${CONFIG_BACKUP_DIR}"
-        echo "  - Bases de Datos: ${DB_BACKUP_DIR}"
-        echo "  - Aplicaciones: ${APP_BACKUP_DIR}"
-        echo ""
-        echo "ESPACIO UTILIZADO:"
-        du -sh "${BACKUP_BASE_DIR}" 2>/dev/null | awk '{print "  Total: " $1}'
-        du -sh "${CONFIG_BACKUP_DIR}" 2>/dev/null | awk '{print "  Configuraciones: " $1}'
-        du -sh "${DB_BACKUP_DIR}" 2>/dev/null | awk '{print "  Bases de Datos: " $1}'
-        du -sh "${APP_BACKUP_DIR}" 2>/dev/null | awk '{print "  Aplicaciones: " $1}'
-        echo ""
-        echo "ARCHIVOS GENERADOS RECIENTEMENTE:"
-        find "${BACKUP_BASE_DIR}" -type f -mtime -1 -exec ls -lh {} \; | awk '{print "  " $9 " (" $5 ")"}'
-        echo ""
-        echo "PRÓXIMA LIMPIEZA DE ARCHIVOS ANTIGUOS: ${RETENTION_DAYS} días"
-        echo "================================================================================"
-    } | tee -a "${report_file}"
-    
-    log SUCCESS "Reporte guardado en: ${report_file}"
-}
 
 # ============================================================================
 # ORQUESTACIÓN PRINCIPAL
@@ -580,9 +599,6 @@ main() {
     # Limpieza
     log INFO "--- FASE 4: MANTENIMIENTO ---"
     cleanup_old_backups
-    
-    # Reporte
-    generate_report
     
     log INFO "============================================"
     log SUCCESS "Proceso de Backup Completado"
