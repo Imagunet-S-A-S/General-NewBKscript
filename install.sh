@@ -5,7 +5,7 @@
 # ============================================================================
 # Propósito : Instalar y configurar el sistema de backup de monitoreo
 # Ejecución : Backup diario a las 02:00 AM vía cron
-# Versión   : 1.3 (cron único, sin systemd, sin restore)
+# Versión   : FINAL (detección segura de dependencias)
 # Uso       : sudo bash install.sh
 ################################################################################
 
@@ -55,32 +55,64 @@ check_root() {
     fi
 }
 
+# ============================================================================
+# VERIFICACIÓN DE DEPENDENCIAS (MODO SEGURO)
+# ============================================================================
+
 check_requirements() {
-    log INFO "Verificando dependencias del sistema..."
+    log INFO "Verificando dependencias del sistema (modo seguro)..."
 
-    local deps=(tar curl mysqldump pg_dump)
-    local missing=()
+    # ----------------------------
+    # Dependencias básicas (seguras)
+    # ----------------------------
+    local basic_missing=()
 
-    for cmd in "${deps[@]}"; do
-        command -v "$cmd" &>/dev/null || missing+=("$cmd")
-    done
+    command -v tar  >/dev/null 2>&1 || basic_missing+=("tar")
+    command -v curl >/dev/null 2>&1 || basic_missing+=("curl")
 
-    if [[ ${#missing[@]} -gt 0 ]]; then
-        log WARN "Dependencias faltantes: ${missing[*]}"
-        log INFO "Intentando instalar dependencias..."
+    if [[ ${#basic_missing[@]} -gt 0 ]]; then
+        log INFO "Instalando dependencias básicas: ${basic_missing[*]}"
 
         if command -v apt-get &>/dev/null; then
             apt-get update
-            apt-get install -y tar curl mysql-client postgresql-client
+            apt-get install -y tar curl
         elif command -v yum &>/dev/null; then
-            yum install -y tar curl mysql postgresql
+            yum install -y tar curl
         else
             log ERROR "No se pudo determinar el gestor de paquetes"
             exit 1
         fi
     fi
 
-    log SUCCESS "Dependencias verificadas"
+    # ----------------------------
+    # MariaDB / MySQL (detección)
+    # ----------------------------
+    if command -v mysqldump >/dev/null 2>&1; then
+        log SUCCESS "mysqldump detectado (MariaDB/MySQL disponible)"
+    else
+        if command -v rpm >/dev/null 2>&1 && rpm -qa | grep -qiE 'mariadb|mysql'; then
+            log WARN "MariaDB/MySQL detectado, pero mysqldump no está disponible"
+            log WARN "El backup de MariaDB/MySQL será omitido"
+        else
+            log INFO "MariaDB/MySQL no instalado (no se realizará backup)"
+        fi
+    fi
+
+    # ----------------------------
+    # PostgreSQL (detección)
+    # ----------------------------
+    if command -v pg_dump >/dev/null 2>&1; then
+        log SUCCESS "pg_dump detectado (PostgreSQL disponible)"
+    else
+        if command -v rpm >/dev/null 2>&1 && rpm -qa | grep -qi postgresql; then
+            log WARN "PostgreSQL detectado, pero pg_dump no está disponible"
+            log WARN "El backup de Airflow PostgreSQL será omitido"
+        else
+            log INFO "PostgreSQL no instalado (no se realizará backup Airflow)"
+        fi
+    fi
+
+    log SUCCESS "Verificación de dependencias completada"
 }
 
 # ============================================================================
@@ -146,7 +178,6 @@ configure_cron() {
     local cron_schedule="0 2 * * *"
     local cron_entry="${cron_schedule} source ${INSTALL_DIR}/backup.conf && ${INSTALL_DIR}/backup_infrastructure.sh >> ${BACKUP_DIR}/logs/cron.log 2>&1"
 
-    # Eliminar entradas previas del backup y agregar la nueva
     (crontab -l 2>/dev/null | grep -v backup_infrastructure || true; echo "$cron_entry") | crontab -
 
     log SUCCESS "Cron configurado correctamente: Diario a las 02:00 AM"
@@ -197,8 +228,8 @@ show_summary() {
     echo "Ejecución automática:"
     echo "  - Diario a las 02:00 AM (cron)"
     echo ""
-    echo "Comandos disponibles:"
-    echo "  backup-now   → Ejecutar backup manual"
+    echo "Comando manual:"
+    echo "  backup-now"
     echo ""
     echo "Logs:"
     echo "  $BACKUP_DIR/logs/"
