@@ -1,73 +1,128 @@
-# SISTEMA DE BACKUP AUTOMÁTICO
+# 📦 Sistema de Backup – Infraestructura
 
-## ¿QUÉ ES?
+## 📌 Descripción general
 
-Este sistema es un **script de respaldo automático** que realiza copias de seguridad diarias de aplicaciones críticas y bases de datos del servidor.
+Este proyecto implementa un **sistema de backup automatizado** para una infraestructura .
 
-Funciona de forma **totalmente automática**, sin intervención manual, y garantiza la protección de configuraciones y datos.
 
----
-
-## ¿QUÉ RESPALDA?
-
-El sistema realiza backups automáticos de las siguientes aplicaciones **solo si están instaladas y en ejecución**:
-
-### ZABBIX
-- Configuración: `/etc/zabbix`
-- Datos: `/var/lib/zabbix`  
-  *(historial, eventos, alertas)*
-
-### GLPI
-- Aplicación completa: `/var/www/glpi`
-- Datos: `/var/lib/glpi`  
-  *(documentos, adjuntos, registros)*
-
-### GRAFANA
-- Configuración: `/etc/grafana`
-- Datos: `/var/lib/grafana`  
-  *(dashboards, plugins, base de datos interna)*
-
-### MARIADB
-- Todas las bases de datos (`mysqldump`)
-- Configuración: `/etc/mysql`  
-  *(archivos `my.cnf` y parámetros)*
-
-### OPENSEARCH *(si está instalado)*
-- Configuración: `/etc/opensearch`
-- Datos: índices y búsquedas
-
-### JAEGER *(si está instalado)*
-- Configuración: `/etc/jaeger`
-- Datos: trazas distribuidas
-
-### AIRFLOW *(si está instalado)*
-- Directorio completo: `$AIRFLOW_HOME`
-- Configuración, DAGs e historial de ejecuciones
+El sistema:
+- Detecta servicios activos
+- Respalda configuraciones y datos críticos
+- Ejecuta backups **diarios vía cron a las 02:00 AM**
+- Mantiene una política de **retención configurable**
+- **No incluye restauración automática** (solo respaldo)
 
 ---
 
-## ¿CÓMO FUNCIONA EL SISTEMA?
+## 🧱 Componentes soportados
 
-### 1. Detección automática
-El script identifica qué servicios están activos en el servidor.
-
-Ejemplos:
-- Si Zabbix está corriendo → se respalda Zabbix
-- Si Grafana está corriendo → se respalda Grafana
-- Si MariaDB está corriendo → se respalda MariaDB
-
-Solo se respaldan los componentes disponibles.
+- Zabbix
+- Grafana
+- GLPI
+- MariaDB / MySQL
+- OpenSearch
+- Jaeger (usa OpenSearch como backend)
+- Apache Airflow (**metadata en PostgreSQL únicamente**)
 
 ---
 
-### 2. Creación de los backups
-- Se copian **configuraciones y datos**
-- Los archivos se almacenan en `/backups/`
-- Cada respaldo se comprime en formato **`.tar.gz`** para reducir espacio
+## 📂 Estructura de directorios
 
-**Ejemplo de archivos generados:**
-```text
-zabbix_config_20240115_020000.tar.gz
-zabbix_lib_20240115_020000.tar.gz
-mariadb_full_20240115_020000.tar.gz
-grafana_lib_20240115_020000.tar.gz
+### 📁 Scripts
+```
+/opt/backup-scripts/
+├── backup_infrastructure.sh
+└── backup.conf
+```
+
+### 📁 Backups
+```
+/backups/
+├── logs/
+├── configs/
+├── databases/
+└── applications/
+```
+
+### 📁 Snapshots OpenSearch
+```
+/var/lib/opensearch/snapshots/
+```
+
+> ⚠️ El directorio de snapshots debe estar declarado en `opensearch.yml`
+> mediante `path.repo`.
+
+---
+
+## ⏱️ Programación del backup
+
+- **Frecuencia:** Diaria
+- **Hora:** 02:00 AM
+- **Método:** cron
+
+Ejemplo de cron:
+```
+0 2 * * * source /opt/backup-scripts/backup.conf && /opt/backup-scripts/backup_infrastructure.sh >> /backups/logs/cron.log 2>&1
+```
+
+---
+
+## 📦 ¿Qué se respalda?
+
+### 🔧 Configuraciones
+- Zabbix: `/etc/zabbix`, `/var/lib/zabbix`
+- Grafana: `/etc/grafana`, `/var/lib/grafana`
+- GLPI: `/var/www/glpi` o `/usr/share/glpi`
+- OpenSearch: `/etc/opensearch`
+- Airflow: `$AIRFLOW_HOME`
+
+### 🗄️ Bases de datos
+- **MariaDB/MySQL**: todas las bases de datos (`mysqldump`)
+- **PostgreSQL (Airflow)**: metadata completa (`pg_dump`)
+- **OpenSearch**: snapshots del cluster (incluye Jaeger)
+
+---
+
+## ⏳ Retención
+
+Configurada en `backup.conf`:
+```
+RETENTION_DAYS=21
+```
+
+| Tipo | Retención |
+|-----|-----------|
+| Configuraciones | 21 días |
+| MariaDB | 21 días |
+| PostgreSQL | 21 días |
+| Logs | 21 días |
+| OpenSearch snapshots | Manual |
+
+---
+
+## 🚀 Instalación
+
+Ejecutar como root:
+```
+sudo bash install.sh
+```
+
+---
+
+## ▶️ Ejecución manual
+
+```
+backup-now
+```
+
+---
+
+## 🔒 Consideraciones
+
+- Backups en caliente (no se detienen servicios)
+- Uso recomendado de `.my.cnf` y `.pgpass`
+- Snapshots OpenSearch no se eliminan automáticamente
+
+---
+
+© Imagunet S.A.S 
