@@ -70,6 +70,9 @@ chmod 755 "$INSTALL_DIR"
 
 log "Copiando scripts..."
 
+[[ -f "$SCRIPT_NAME" ]] || { echo "Error: $SCRIPT_NAME no encontrado en el directorio actual"; exit 1; }
+[[ -f "$CONFIG_NAME" ]] || { echo "Error: $CONFIG_NAME no encontrado en el directorio actual"; exit 1; }
+
 cp "$SCRIPT_NAME" "$INSTALL_DIR/"
 cp "$CONFIG_NAME" "$INSTALL_DIR/"
 
@@ -94,9 +97,9 @@ ln -sf "$INSTALL_DIR/$SCRIPT_NAME" /usr/local/bin/backup-now
 
 log "Configurando cron diario a las 02:00 AM"
 
-CRON_ENTRY="${CRON_SCHEDULE} source ${INSTALL_DIR}/${CONFIG_NAME} && ${INSTALL_DIR}/${SCRIPT_NAME} >/dev/null 2>&1"
+CRON_ENTRY="${CRON_SCHEDULE} . ${INSTALL_DIR}/${CONFIG_NAME} && ${INSTALL_DIR}/${SCRIPT_NAME} >/dev/null 2>&1"
 
-(crontab -l 2>/dev/null | grep -v backup_infrastructure || true; echo "$CRON_ENTRY") | crontab -
+(crontab -l 2>/dev/null | grep -vF "${INSTALL_DIR}/${SCRIPT_NAME}" || true; echo "$CRON_ENTRY") | crontab -
 
 # ============================================================================
 # FINAL

@@ -5,7 +5,7 @@ set -euo pipefail
 # BACKUP INFRAESTRUCTURA DE MONITOREO - FINAL DEFINITIVO
 ################################################################################
 
-RETENTION_DAYS=21
+RETENTION_DAYS=14
 HOT_DAYS=7
 
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
@@ -39,7 +39,21 @@ prepare_app_dirs() {
 }
 
 rotate_app() {
-    find "$1" -maxdepth 1 -type d -name "20*" -mtime +"$RETENTION_DAYS" -exec rm -rf {} \;
+    local app_base="$1"
+
+    # Comprimir al máximo las semanas que salen del hot zone y aún no están comprimidas
+    find "$app_base" -maxdepth 1 -type d -name "20*" -mtime +"$HOT_DAYS" | while read -r week_dir; do
+        if [[ -f "${week_dir}.tar.gz" ]]; then
+            rm -rf "$week_dir"
+        else
+            GZIP=-9 tar -czf "${week_dir}.tar.gz" -C "$app_base" "$(basename "$week_dir")" >>"$LOG_FILE" 2>&1 \
+                && rm -rf "$week_dir"
+        fi
+    done
+
+    # Eliminar archivos comprimidos y directorios fuera del periodo de retención
+    find "$app_base" -maxdepth 1 -type f -name "20*.tar.gz" -mtime +"$RETENTION_DAYS" -delete
+    find "$app_base" -maxdepth 1 -type d  -name "20*"       -mtime +"$RETENTION_DAYS" -exec rm -rf {} \;
 }
 
 # ============================ ZABBIX ==========================================
@@ -75,13 +89,27 @@ backup_mariadb() {
 
     [[ ${#cfg[@]} -gt 0 ]] && tar -czf "$NEWEST_DIR/configs/mariadb_cfg_$TIMESTAMP.tar.gz" "${cfg[@]}" >>"$LOG_FILE" 2>&1
 
+    # Mapeo de schema → carpeta base de la aplicación dueña
+    declare -A DB_APP_MAP=(
+        ["glpi"]="/var/lib/glpi"
+        ["zabbix"]="/var/lib/zabbix"
+        ["grafana"]="/var/lib/grafana"
+    )
+
     local dbs
     dbs=$(mysql -N -e "SHOW DATABASES;" 2>>"$LOG_FILE" | grep -Ev "^(mysql|sys|information_schema|performance_schema)$")
 
     for db in $dbs; do
-        mysqldump --single-transaction --routines --triggers "$db" > "$NEWEST_DIR/databases/${db}_$TIMESTAMP.sql" 2>>"$LOG_FILE"
-        tar -czf "$NEWEST_DIR/databases/${db}_$TIMESTAMP.tar.gz" -C "$NEWEST_DIR/databases" "${db}_$TIMESTAMP.sql"
-        rm -f "$NEWEST_DIR/databases/${db}_$TIMESTAMP.sql"
+        local target_dir
+        if [[ -n "${DB_APP_MAP[$db]:-}" ]]; then
+            target_dir="${DB_APP_MAP[$db]}/newest/databases"
+            mkdir -p "$target_dir"
+        else
+            target_dir="$NEWEST_DIR/databases"
+        fi
+        mysqldump --single-transaction --routines --triggers "$db" > "$target_dir/${db}_$TIMESTAMP.sql" 2>>"$LOG_FILE"
+        tar -czf "$target_dir/${db}_$TIMESTAMP.tar.gz" -C "$target_dir" "${db}_$TIMESTAMP.sql"
+        rm -f "$target_dir/${db}_$TIMESTAMP.sql"
     done
 
     rotate_app /var/lib/mariadb
