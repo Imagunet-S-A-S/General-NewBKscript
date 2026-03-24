@@ -5,8 +5,12 @@ set -euo pipefail
 # BACKUP INFRAESTRUCTURA DE MONITOREO - FINAL DEFINITIVO
 ################################################################################
 
-RETENTION_DAYS=14
-HOT_DAYS=7
+# Cargar configuración si existe
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[[ -f "$SCRIPT_DIR/backup.conf" ]] && source "$SCRIPT_DIR/backup.conf"
+
+RETENTION_DAYS="${RETENTION_DAYS:-14}"
+HOT_DAYS="${HOT_DAYS:-7}"
 
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 WEEK_END_DATE="$(date -d 'last sunday' +%Y%m%d)"
@@ -56,32 +60,88 @@ rotate_app() {
     find "$app_base" -maxdepth 1 -type d  -name "20*"       -mtime +"$RETENTION_DAYS" -exec rm -rf {} \;
 }
 
+# Respalda rutas extra definidas en una variable "SERVICIO_EXTRA_DIRS".
+# Las rutas se separan con ":" (igual que $PATH).
+# Uso: backup_extra_dirs "GLPI_EXTRA_DIRS" "glpi" "applications"
+backup_extra_dirs() {
+    local var_name="$1"   # nombre de la variable, ej: GLPI_EXTRA_DIRS
+    local label="$2"      # prefijo del archivo de salida
+    local category="$3"   # configs | applications
+
+    local dirs="${!var_name:-}"
+    [[ -z "$dirs" ]] && return 0
+
+    local IFS=':'
+    for dir in $dirs; do
+        [[ -d "$dir" ]] && compress_dir "$dir" \
+            "$NEWEST_DIR/${category}/${label}_extra_$(basename "$dir")_$TIMESTAMP"
+    done
+}
+
 # ============================ ZABBIX ==========================================
 backup_zabbix() {
-    prepare_app_dirs /var/lib/zabbix
-    [[ -d /etc/zabbix ]] && compress_dir /etc/zabbix "$NEWEST_DIR/configs/zabbix_cfg_$TIMESTAMP"
-    [[ -d /var/lib/zabbix ]] && compress_dir /var/lib/zabbix "$NEWEST_DIR/applications/zabbix_data_$TIMESTAMP"
-    rotate_app /var/lib/zabbix
+    local zabbix_data="${ZABBIX_DATA_DIR:-/var/lib/zabbix}"
+    prepare_app_dirs "$zabbix_data"
+
+    # Rutas individuales: solo se respaldan si la variable está definida y no vacía
+    [[ -n "${ZABBIX_CFG_DIR:-}"  && -d "$ZABBIX_CFG_DIR"  ]] && \
+        compress_dir "$ZABBIX_CFG_DIR"  "$NEWEST_DIR/configs/zabbix_cfg_$TIMESTAMP"
+    [[ -n "${ZABBIX_DATA_DIR:-}" && -d "$ZABBIX_DATA_DIR" ]] && \
+        compress_dir "$ZABBIX_DATA_DIR" "$NEWEST_DIR/applications/zabbix_data_$TIMESTAMP"
+
+    backup_extra_dirs "ZABBIX_EXTRA_DIRS" "zabbix" "applications"
+    rotate_app "$zabbix_data"
 }
 
 # ============================ GRAFANA =========================================
 backup_grafana() {
-    prepare_app_dirs /var/lib/grafana
-    [[ -d /etc/grafana ]] && compress_dir /etc/grafana "$NEWEST_DIR/configs/grafana_cfg_$TIMESTAMP"
-    [[ -d /var/lib/grafana ]] && compress_dir /var/lib/grafana "$NEWEST_DIR/applications/grafana_data_$TIMESTAMP"
-    rotate_app /var/lib/grafana
+    local grafana_data="${GRAFANA_DATA_DIR:-/var/lib/grafana}"
+    prepare_app_dirs "$grafana_data"
+
+    [[ -n "${GRAFANA_CFG_DIR:-}"  && -d "$GRAFANA_CFG_DIR"  ]] && \
+        compress_dir "$GRAFANA_CFG_DIR"  "$NEWEST_DIR/configs/grafana_cfg_$TIMESTAMP"
+    [[ -n "${GRAFANA_DATA_DIR:-}" && -d "$GRAFANA_DATA_DIR" ]] && \
+        compress_dir "$GRAFANA_DATA_DIR" "$NEWEST_DIR/applications/grafana_data_$TIMESTAMP"
+
+    backup_extra_dirs "GRAFANA_EXTRA_DIRS" "grafana" "applications"
+    rotate_app "$grafana_data"
 }
 
 # ============================ GLPI ============================================
 backup_glpi() {
-    prepare_app_dirs /var/lib/glpi
-    [[ -d /var/www/glpi ]] && compress_dir /var/www/glpi "$NEWEST_DIR/applications/glpi_$TIMESTAMP"
-    rotate_app /var/lib/glpi
+    local glpi_base="${GLPI_BACKUP_BASE:-/var/backups/glpi}"
+    prepare_app_dirs "$glpi_base"
+
+    # Cada ruta solo se respalda si la variable está definida (no comentada) y existe
+    [[ -n "${GLPI_CFG_DIR:-}"  && -d "$GLPI_CFG_DIR"  ]] && \
+        compress_dir "$GLPI_CFG_DIR"  "$NEWEST_DIR/configs/glpi_cfg_$TIMESTAMP"
+
+    [[ -n "${GLPI_APP_DIR:-}"  && -d "$GLPI_APP_DIR"  ]] && \
+        compress_dir "$GLPI_APP_DIR"  "$NEWEST_DIR/applications/glpi_app_$TIMESTAMP"
+
+    if [[ -n "${GLPI_DATA_DIR:-}" && -d "$GLPI_DATA_DIR" ]]; then
+        tar -czf "$NEWEST_DIR/applications/glpi_data_$TIMESTAMP.tar.gz" \
+            --exclude="$glpi_base" \
+            -C "$(dirname "$GLPI_DATA_DIR")" \
+            "$(basename "$GLPI_DATA_DIR")" >>"$LOG_FILE" 2>&1
+    fi
+
+    backup_extra_dirs "GLPI_EXTRA_DIRS" "glpi" "applications"
+    rotate_app "$glpi_base"
 }
 
 # ============================ MARIADB =========================================
 backup_mariadb() {
     prepare_app_dirs /var/lib/mariadb
+
+    # Parámetros de conexión (locales o remotos según backup.conf)
+    local mysql_host="${MYSQL_HOST:-localhost}"
+    local mysql_port="${MYSQL_PORT:-3306}"
+    local mysql_user="${MYSQL_USER:-root}"
+    local mysql_pass="${MYSQL_PASSWORD:-}"
+
+    local mysql_opts=(-h "$mysql_host" -P "$mysql_port" -u "$mysql_user")
+    [[ -n "$mysql_pass" ]] && mysql_opts+=("-p${mysql_pass}")
 
     local cfg=()
     [[ -f /etc/my.cnf ]] && cfg+=("/etc/my.cnf")
@@ -90,14 +150,22 @@ backup_mariadb() {
     [[ ${#cfg[@]} -gt 0 ]] && tar -czf "$NEWEST_DIR/configs/mariadb_cfg_$TIMESTAMP.tar.gz" "${cfg[@]}" >>"$LOG_FILE" 2>&1
 
     # Mapeo de schema → carpeta base de la aplicación dueña
+    local glpi_base="${GLPI_BACKUP_BASE:-/var/backups/glpi}"
     declare -A DB_APP_MAP=(
-        ["glpi"]="/var/lib/glpi"
+        ["glpi"]="$glpi_base"
         ["zabbix"]="/var/lib/zabbix"
         ["grafana"]="/var/lib/grafana"
     )
 
     local dbs
-    dbs=$(mysql -N -e "SHOW DATABASES;" 2>>"$LOG_FILE" | grep -Ev "^(mysql|sys|information_schema|performance_schema)$")
+    # grep -Ev puede retornar exit 1 si no hay coincidencias; || true evita abortar con pipefail
+    dbs=$(mysql "${mysql_opts[@]}" -N -e "SHOW DATABASES;" 2>>"$LOG_FILE" \
+        | grep -Ev "^(mysql|sys|information_schema|performance_schema)$" || true)
+
+    if [[ -z "$dbs" ]]; then
+        log "WARN" "No se encontraron bases de datos de usuario para respaldar"
+        return 0
+    fi
 
     for db in $dbs; do
         local target_dir
@@ -107,7 +175,8 @@ backup_mariadb() {
         else
             target_dir="$NEWEST_DIR/databases"
         fi
-        mysqldump --single-transaction --routines --triggers "$db" > "$target_dir/${db}_$TIMESTAMP.sql" 2>>"$LOG_FILE"
+        mysqldump "${mysql_opts[@]}" --single-transaction --routines --triggers "$db" \
+            > "$target_dir/${db}_$TIMESTAMP.sql" 2>>"$LOG_FILE"
         tar -czf "$target_dir/${db}_$TIMESTAMP.tar.gz" -C "$target_dir" "${db}_$TIMESTAMP.sql"
         rm -f "$target_dir/${db}_$TIMESTAMP.sql"
     done
@@ -152,7 +221,7 @@ backup_opensearch() {
 # ============================ MAIN ============================================
 is_service_running zabbix-server && backup_zabbix
 is_service_running grafana-server && backup_grafana
-[[ -d /var/www/glpi ]] && backup_glpi
+{ [[ -d "${GLPI_APP_DIR:-/usr/share/glpi}" ]] || [[ -d "${GLPI_DATA_DIR:-/var/lib/glpi}" ]] || [[ -d "${GLPI_CFG_DIR:-/etc/glpi}" ]]; } && backup_glpi
 is_service_running mariadb && command -v mysqldump >/dev/null && backup_mariadb
 is_service_running airflow-webserver && backup_airflow
 is_service_running opensearch && backup_opensearch
