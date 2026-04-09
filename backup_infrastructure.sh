@@ -5,9 +5,13 @@ set -euo pipefail
 # BACKUP INFRAESTRUCTURA DE MONITOREO - FINAL DEFINITIVO
 ################################################################################
 
-# Cargar configuración si existe
+# Cargar configuración: primero junto al script (desarrollo), luego ruta de instalación
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[[ -f "$SCRIPT_DIR/backup.conf" ]] && source "$SCRIPT_DIR/backup.conf"
+if [[ -f "$SCRIPT_DIR/backup.conf" ]]; then
+    source "$SCRIPT_DIR/backup.conf"
+elif [[ -f "/etc/backup-infrastructure/backup.conf" ]]; then
+    source "/etc/backup-infrastructure/backup.conf"
+fi
 
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
 HOT_DAYS="${HOT_DAYS:-7}"
@@ -60,6 +64,39 @@ rotate_app() {
     find "$app_base" -maxdepth 1 -type d  -name "20*"       -mtime +"$RETENTION_DAYS" -exec rm -rf {} \;
 }
 
+# Verifica que la partición de $dir no supere el umbral de uso configurado.
+# Si lo supera, intenta liberar espacio ejecutando rotate_app.
+# Si tras la rotación el uso sigue por encima, devuelve 1 (el backup debe cancelarse).
+# Requiere que LOG_FILE esté definido (llamar después de prepare_app_dirs).
+check_disk_space() {
+    local dir="$1"
+    local label="$2"
+    local threshold="${DISK_THRESHOLD_PCT:-85}"
+
+    local usage
+    usage=$(df --output=pcent "$dir" 2>/dev/null | tail -1 | tr -d ' %')
+
+    if [[ -z "$usage" ]]; then
+        log "WARN" "[$label] No se pudo leer el uso de disco en $dir — se continúa de todos modos"
+        return 0
+    fi
+
+    if (( usage < threshold )); then
+        return 0
+    fi
+
+    log "WARN" "[$label] Partición al ${usage}% (límite ${threshold}%) — ejecutando rotación para liberar espacio"
+    rotate_app "$dir"
+
+    usage=$(df --output=pcent "$dir" 2>/dev/null | tail -1 | tr -d ' %')
+    if (( usage >= threshold )); then
+        log "ERROR" "[$label] Partición aún al ${usage}% tras rotación — backup CANCELADO"
+        return 1
+    fi
+
+    log "INFO" "[$label] Espacio liberado (ahora ${usage}%) — continuando backup"
+}
+
 # Respalda rutas extra definidas en una variable "SERVICIO_EXTRA_DIRS".
 # Las rutas se separan con ":" (igual que $PATH).
 # Uso: backup_extra_dirs "GLPI_EXTRA_DIRS" "glpi" "applications"
@@ -82,8 +119,8 @@ backup_extra_dirs() {
 backup_zabbix() {
     local zabbix_data="${ZABBIX_DATA_DIR:-/var/lib/zabbix}"
     prepare_app_dirs "$zabbix_data"
+    check_disk_space "$zabbix_data" "ZABBIX" || return 0
 
-    # Rutas individuales: solo se respaldan si la variable está definida y no vacía
     [[ -n "${ZABBIX_CFG_DIR:-}"  && -d "$ZABBIX_CFG_DIR"  ]] && \
         compress_dir "$ZABBIX_CFG_DIR"  "$NEWEST_DIR/configs/zabbix_cfg_$TIMESTAMP"
     [[ -n "${ZABBIX_DATA_DIR:-}" && -d "$ZABBIX_DATA_DIR" ]] && \
@@ -97,6 +134,7 @@ backup_zabbix() {
 backup_grafana() {
     local grafana_data="${GRAFANA_DATA_DIR:-/var/lib/grafana}"
     prepare_app_dirs "$grafana_data"
+    check_disk_space "$grafana_data" "GRAFANA" || return 0
 
     [[ -n "${GRAFANA_CFG_DIR:-}"  && -d "$GRAFANA_CFG_DIR"  ]] && \
         compress_dir "$GRAFANA_CFG_DIR"  "$NEWEST_DIR/configs/grafana_cfg_$TIMESTAMP"
@@ -111,8 +149,8 @@ backup_grafana() {
 backup_glpi() {
     local glpi_base="${GLPI_BACKUP_BASE:-/var/backups/glpi}"
     prepare_app_dirs "$glpi_base"
+    check_disk_space "$glpi_base" "GLPI" || return 0
 
-    # Cada ruta solo se respalda si la variable está definida (no comentada) y existe
     [[ -n "${GLPI_CFG_DIR:-}"  && -d "$GLPI_CFG_DIR"  ]] && \
         compress_dir "$GLPI_CFG_DIR"  "$NEWEST_DIR/configs/glpi_cfg_$TIMESTAMP"
 
@@ -133,6 +171,7 @@ backup_glpi() {
 # ============================ MARIADB =========================================
 backup_mariadb() {
     prepare_app_dirs /var/lib/mariadb
+    check_disk_space /var/lib/mariadb "MARIADB" || return 0
 
     # Parámetros de conexión (locales o remotos según backup.conf)
     local mysql_host="${MYSQL_HOST:-localhost}"
@@ -187,6 +226,7 @@ backup_mariadb() {
 # ============================ AIRFLOW =========================================
 backup_airflow() {
     prepare_app_dirs /var/lib/airflow
+    check_disk_space /var/lib/airflow "AIRFLOW" || return 0
 
     [[ -d "${AIRFLOW_HOME:-/opt/airflow}" ]] && \
         compress_dir "${AIRFLOW_HOME:-/opt/airflow}" "$NEWEST_DIR/applications/airflow_files_$TIMESTAMP"
@@ -206,6 +246,7 @@ backup_airflow() {
 # ============================ OPENSEARCH (INCLUYE JAEGER) =====================
 backup_opensearch() {
     prepare_app_dirs /var/lib/opensearch
+    check_disk_space /var/lib/opensearch "OPENSEARCH" || return 0
 
     curl -s -X PUT "http://${OPENSEARCH_HOST:-localhost}:${OPENSEARCH_PORT:-9200}/_snapshot/backup_repo" \
         -H 'Content-Type: application/json' \
@@ -219,9 +260,10 @@ backup_opensearch() {
 }
 
 # ============================ MAIN ============================================
-is_service_running zabbix-server && backup_zabbix
-is_service_running grafana-server && backup_grafana
-{ [[ -d "${GLPI_APP_DIR:-/usr/share/glpi}" ]] || [[ -d "${GLPI_DATA_DIR:-/var/lib/glpi}" ]] || [[ -d "${GLPI_CFG_DIR:-/etc/glpi}" ]]; } && backup_glpi
-is_service_running mariadb && command -v mysqldump >/dev/null && backup_mariadb
-is_service_running airflow-webserver && backup_airflow
-is_service_running opensearch && backup_opensearch
+[[ "${BACKUP_ENABLE_ZABBIX:-true}"     == "true" ]] && is_service_running zabbix-server     && backup_zabbix
+[[ "${BACKUP_ENABLE_GRAFANA:-true}"    == "true" ]] && is_service_running grafana-server    && backup_grafana
+[[ "${BACKUP_ENABLE_GLPI:-true}"       == "true" ]] && \
+    { [[ -d "${GLPI_APP_DIR:-}" ]] || [[ -d "${GLPI_DATA_DIR:-}" ]] || [[ -d "${GLPI_CFG_DIR:-}" ]]; } && backup_glpi
+[[ "${BACKUP_ENABLE_MARIADB:-true}"    == "true" ]] && is_service_running mariadb           && command -v mysqldump >/dev/null && backup_mariadb
+[[ "${BACKUP_ENABLE_AIRFLOW:-true}"    == "true" ]] && is_service_running airflow-webserver && backup_airflow
+[[ "${BACKUP_ENABLE_OPENSEARCH:-true}" == "true" ]] && is_service_running opensearch        && backup_opensearch

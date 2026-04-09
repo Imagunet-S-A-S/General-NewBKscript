@@ -1,0 +1,19 @@
+[Unit]
+Description=Ejecución diaria del backup de infraestructura
+Requires=backup-imagunet.service
+
+[Timer]
+# Hora de ejecución diaria — ajustar según necesidad
+# Ejemplos:
+#   OnCalendar=*-*-* 02:00:00   → todos los días a las 02:00 AM
+#   OnCalendar=Mon *-*-* 03:00  → solo los lunes a las 03:00
+#   OnCalendar=weekly            → lunes 00:00 AM
+OnCalendar=*-*-* 02:00:00
+
+# Si el sistema estaba apagado a la hora programada, ejecuta al próximo arranque
+Persistent=true
+
+Unit=backup-imagunet.service
+
+[Install]
+WantedBy=timers.target

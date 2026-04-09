@@ -1,0 +1,20 @@
+[Unit]
+Description=Backup de Infraestructura de Monitoreo
+Documentation=file:///opt/backup-scripts/readme.md
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/backup-scripts/backup_infrastructure.sh
+User=root
+
+# Los logs van a journald — ver con: journalctl -u backup-imagunet
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=backup-imagunet
+
+# Cancelar el backup si supera las 4 horas (evita bloqueos indefinidos)
+TimeoutStartSec=14400
+
+[Install]
+WantedBy=multi-user.target
