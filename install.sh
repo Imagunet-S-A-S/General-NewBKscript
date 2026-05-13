@@ -7,10 +7,9 @@ set -euo pipefail
 
 INSTALL_DIR="/opt/backup-scripts"
 CONF_DIR="/etc/backup-imagunet"
-SYSTEMD_DIR="/etc/systemd/system"
 SCRIPT_NAME="backup_infrastructure.sh"
 CONFIG_NAME="backup.conf"
-SERVICE_NAME="backup-imagunet"
+CRON_SCHEDULE="0 2 * * *"
 
 # ============================================================================
 # LOG
@@ -34,9 +33,8 @@ fi
 log "Verificando dependencias básicas..."
 
 missing=()
-command -v tar       >/dev/null 2>&1 || missing+=("tar")
-command -v curl      >/dev/null 2>&1 || missing+=("curl")
-command -v systemctl >/dev/null 2>&1 || { echo "systemd no encontrado — este instalador requiere systemd"; exit 1; }
+command -v tar  >/dev/null 2>&1 || missing+=("tar")
+command -v curl >/dev/null 2>&1 || missing+=("curl")
 
 if [[ ${#missing[@]} -gt 0 ]]; then
     log "Instalando dependencias: ${missing[*]}"
@@ -53,10 +51,8 @@ fi
 
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-[[ -f "$SRC_DIR/$SCRIPT_NAME"            ]] || { echo "Error: $SCRIPT_NAME no encontrado"; exit 1; }
-[[ -f "$SRC_DIR/$CONFIG_NAME"            ]] || { echo "Error: $CONFIG_NAME no encontrado"; exit 1; }
-[[ -f "$SRC_DIR/${SERVICE_NAME}.service" ]] || { echo "Error: ${SERVICE_NAME}.service no encontrado"; exit 1; }
-[[ -f "$SRC_DIR/${SERVICE_NAME}.timer"   ]] || { echo "Error: ${SERVICE_NAME}.timer no encontrado"; exit 1; }
+[[ -f "$SRC_DIR/$SCRIPT_NAME" ]] || { echo "Error: $SCRIPT_NAME no encontrado"; exit 1; }
+[[ -f "$SRC_DIR/$CONFIG_NAME" ]] || { echo "Error: $CONFIG_NAME no encontrado"; exit 1; }
 
 # ============================================================================
 # SCRIPT DE BACKUP
@@ -85,30 +81,14 @@ else
 fi
 
 # ============================================================================
-# UNITS DE SYSTEMD
+# CRON (ÚNICO – 02:00 AM)
 # ============================================================================
 
-log "Instalando units de systemd..."
+log "Configurando cron diario a las 02:00 AM..."
 
-install -m 644 "$SRC_DIR/${SERVICE_NAME}.service" "$SYSTEMD_DIR/"
-install -m 644 "$SRC_DIR/${SERVICE_NAME}.timer"   "$SYSTEMD_DIR/"
-sed -i 's/\r$//' "$SYSTEMD_DIR/${SERVICE_NAME}.service"
-sed -i 's/\r$//' "$SYSTEMD_DIR/${SERVICE_NAME}.timer"
+CRON_ENTRY="${CRON_SCHEDULE} . ${CONF_DIR}/${CONFIG_NAME} && ${INSTALL_DIR}/${SCRIPT_NAME} >/dev/null 2>&1"
 
-systemctl daemon-reload
-
-# Detener el timer si estaba corriendo antes de re-habilitarlo
-systemctl stop "${SERVICE_NAME}.timer" 2>/dev/null || true
-systemctl enable --now "${SERVICE_NAME}.timer"
-
-# ============================================================================
-# LIMPIAR CRON ANTERIOR (si existía)
-# ============================================================================
-
-if crontab -l 2>/dev/null | grep -qF "$SCRIPT_NAME"; then
-    log "Eliminando entrada de cron anterior..."
-    (crontab -l 2>/dev/null | grep -vF "$SCRIPT_NAME") | crontab -
-fi
+(crontab -l 2>/dev/null | grep -vF "${INSTALL_DIR}/${SCRIPT_NAME}" || true; echo "$CRON_ENTRY") | crontab -
 
 # ============================================================================
 # RESUMEN
@@ -121,13 +101,8 @@ echo "==============================================="
 echo ""
 echo " Script  : $INSTALL_DIR/$SCRIPT_NAME"
 echo " Config  : $CONF_DIR/$CONFIG_NAME"
-echo " Timer   : Diario a las 02:00 AM (ver ${SERVICE_NAME}.timer)"
+echo " Cron    : Diario a las 02:00 AM"
 echo ""
-echo " Comandos útiles:"
-echo "   backup-now                                        → ejecutar ahora"
-echo "   systemctl stop   ${SERVICE_NAME}          → cancelar ejecución en curso"
-echo "   systemctl status ${SERVICE_NAME}          → estado del último backup"
-echo "   systemctl stop   ${SERVICE_NAME}.timer    → desactivar ejecución automática"
-echo "   systemctl start  ${SERVICE_NAME}.timer    → reactivar ejecución automática"
-echo "   journalctl -u    ${SERVICE_NAME} -f       → logs en tiempo real"
+echo " Ejecución manual:"
+echo "   backup-now"
 echo ""

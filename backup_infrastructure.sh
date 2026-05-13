@@ -9,8 +9,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$SCRIPT_DIR/backup.conf" ]]; then
     source "$SCRIPT_DIR/backup.conf"
-elif [[ -f "/etc/backup-infrastructure/backup.conf" ]]; then
-    source "/etc/backup-infrastructure/backup.conf"
+elif [[ -f "/etc/backup-imagunet/backup.conf" ]]; then
+    source "/etc/backup-imagunet/backup.conf"
 fi
 
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
@@ -126,6 +126,44 @@ backup_zabbix() {
     [[ -n "${ZABBIX_DATA_DIR:-}" && -d "$ZABBIX_DATA_DIR" ]] && \
         compress_dir "$ZABBIX_DATA_DIR" "$NEWEST_DIR/applications/zabbix_data_$TIMESTAMP"
 
+    # Base de datos: solo si ZABBIX_DB_TYPE está definido
+    case "${ZABBIX_DB_TYPE:-}" in
+        postgresql)
+            if command -v pg_dump >/dev/null 2>&1; then
+                log "INFO" "[ZABBIX] Dumpeando base de datos PostgreSQL ${ZABBIX_DB_NAME:-zabbix}..."
+                PGPASSWORD="${ZABBIX_DB_PASSWORD:-}" pg_dump \
+                    -h "${ZABBIX_DB_HOST:-localhost}" \
+                    -p "${ZABBIX_DB_PORT:-5432}" \
+                    -U "${ZABBIX_DB_USER:-zabbix}" \
+                    -F c \
+                    "${ZABBIX_DB_NAME:-zabbix}" \
+                    > "$NEWEST_DIR/databases/zabbix_pg_$TIMESTAMP.dump" 2>>"$LOG_FILE"
+            else
+                log "WARN" "[ZABBIX] pg_dump no encontrado — se omite el backup de base de datos"
+            fi
+            ;;
+        mariadb)
+            if command -v mysqldump >/dev/null 2>&1; then
+                log "INFO" "[ZABBIX] Dumpeando base de datos MariaDB ${ZABBIX_DB_NAME:-zabbix}..."
+                local z_opts=(-h "${ZABBIX_DB_HOST:-localhost}" -P "${ZABBIX_DB_PORT:-3306}" -u "${ZABBIX_DB_USER:-zabbix}")
+                [[ -n "${ZABBIX_DB_PASSWORD:-}" ]] && z_opts+=("-p${ZABBIX_DB_PASSWORD}")
+                mysqldump "${z_opts[@]}" --single-transaction --routines --triggers "${ZABBIX_DB_NAME:-zabbix}" \
+                    > "$NEWEST_DIR/databases/zabbix_$TIMESTAMP.sql" 2>>"$LOG_FILE"
+                tar -czf "$NEWEST_DIR/databases/zabbix_$TIMESTAMP.tar.gz" \
+                    -C "$NEWEST_DIR/databases" "zabbix_$TIMESTAMP.sql"
+                rm -f "$NEWEST_DIR/databases/zabbix_$TIMESTAMP.sql"
+            else
+                log "WARN" "[ZABBIX] mysqldump no encontrado — se omite el backup de base de datos"
+            fi
+            ;;
+        "")
+            # No configurado: la DB se maneja por backup_mariadb si aplica
+            ;;
+        *)
+            log "WARN" "[ZABBIX] ZABBIX_DB_TYPE='${ZABBIX_DB_TYPE}' no reconocido (use: mariadb | postgresql)"
+            ;;
+    esac
+
     backup_extra_dirs "ZABBIX_EXTRA_DIRS" "zabbix" "applications"
     rotate_app "$zabbix_data"
 }
@@ -206,7 +244,18 @@ backup_mariadb() {
         return 0
     fi
 
+    # Schemas que tienen su propio backup configurado en otra función.
+    # Si ZABBIX_DB_TYPE está definido, backup_zabbix() ya lo maneja — evitar duplicado.
+    declare -A skip_dbs=()
+    [[ -n "${ZABBIX_DB_TYPE:-}" ]] && \
+        skip_dbs["${ZABBIX_DB_NAME:-zabbix}"]="backup_zabbix (${ZABBIX_DB_TYPE})"
+
     for db in $dbs; do
+        if [[ -n "${skip_dbs[$db]:-}" ]]; then
+            log "INFO" "[MARIADB] Saltando '$db' — gestionado por ${skip_dbs[$db]}"
+            continue
+        fi
+
         local target_dir
         if [[ -n "${DB_APP_MAP[$db]:-}" ]]; then
             target_dir="${DB_APP_MAP[$db]}/newest/databases"
